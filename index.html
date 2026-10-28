@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>貝果團購</title>
+<meta name="description" content="看圖選口味，自動計算金額與湊團進度">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Noto+Sans+TC:wght@400;500;700;900&display=swap">
+<script>
+/* ===== 唯一要改的地方：把 Apps Script 部署後的網址貼在引號裡（結尾是 /exec）=====
+   口味、價格、截止都在 Google 試算表修改，不用改這個檔案。 */
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzrwfNCFJVBnTWyoM0CgtU-CU9aZfIrTw8KVDjiUB91f0FSTqtEg0KTnubTzdau1XB3/exec";
+</script>
+<style>
+/* Layout: header + group progress card, flavor photo grid, sticky tally bar at the bottom. Palette: toasted crust, cream crumb, sesame ink. */
+:root{
+  --paper:#FBF6EE; --card:#FFFFFF; --ink:#33261C; --muted:#8A7462; --line:#EEDFCB;
+  --crust:#B8611E; --crust-ink:#FFFFFF; --crumb:#F6E7D3; --good:#3F8A55; --warn:#B4400E;
+  --f-body:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-num:"Fredoka","Noto Sans TC",system-ui,sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root{
+  --paper:#1C1612; --card:#28201A; --ink:#F4EADF; --muted:#BBA48F; --line:#43362B;
+  --crust:#E08A45; --crust-ink:#1C1612; --crumb:#3A2B1F; --good:#7CC48E; --warn:#FB923C; color-scheme:dark}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-top:env(safe-area-inset-top,0px);padding-bottom:calc(130px + env(safe-area-inset-bottom,0px))}
+img{max-width:100%}
+[hidden]{display:none!important}
+.wrap{max-width:1000px;margin:0 auto}
+button{font:inherit;color:inherit;cursor:pointer;-webkit-tap-highlight-color:transparent}
+button:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid var(--crust);outline-offset:2px}
+.num{font-family:var(--f-num);font-variant-numeric:tabular-nums}
+
+header.top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:10px 16px;padding-block:22px 12px}
+.brand{min-width:0}
+.brand small{display:block;color:var(--crust);font-weight:700;letter-spacing:.16em;font-size:12px}
+.brand h1{margin:2px 0 0;font-size:clamp(21px,4.6vw,30px);font-weight:900;text-wrap:balance;line-height:1.25}
+.brand p{margin:4px 0 0;color:var(--muted);font-size:13.5px}
+.hdr-actions{display:flex;align-items:center;gap:8px}
+.status{display:inline-flex;font-size:13px;font-weight:700;padding:4px 10px;border-radius:999px;background:var(--crumb);color:var(--crust)}
+.status.closed{background:var(--line);color:var(--muted)}
+.link{border:1.5px solid var(--line);background:var(--card);border-radius:999px;padding:5px 12px;font-size:13.5px;font-weight:700}
+
+.rule{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:12px}
+.rule div{background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:8px 10px;font-size:12.5px;color:var(--muted)}
+.rule b{display:block;color:var(--ink);font-size:15px;font-family:var(--f-num);font-weight:700}
+.pool{background:var(--crumb);border-radius:16px;padding:14px 16px;margin-bottom:18px}
+.pool h2{margin:0 0 4px;font-size:15px;font-weight:900}
+.pool p{margin:0;font-size:13.5px;color:var(--muted)}
+.pool p b{color:var(--crust)}
+.beads{display:flex;gap:4px;margin-top:10px}
+.beads i{flex:1;height:10px;border-radius:5px;background:var(--card);border:1px solid var(--line)}
+.beads i.on{background:var(--crust);border-color:var(--crust)}
+
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px}
+.dish{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:10px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.dish.on{border-color:var(--crust);box-shadow:0 0 0 2px var(--crumb)}
+.dish .ph{aspect-ratio:1;width:100%;border-radius:12px;overflow:hidden;background:var(--crumb)}
+.dish .ph img{width:100%;height:100%;object-fit:cover;display:block}
+.dish .nm{font-weight:700;font-size:15px;line-height:1.35}
+.dish .ds{font-size:12.5px;color:var(--muted);line-height:1.45}
+.dish .row{display:flex;align-items:center;justify-content:flex-end;gap:6px;margin-top:auto;padding-top:4px}
+.step{display:flex;align-items:center;gap:4px}
+.step button{width:36px;height:36px;border-radius:50%;border:1.5px solid var(--crust);background:var(--card);color:var(--crust);font-size:20px;font-weight:700;line-height:1;display:grid;place-items:center;padding:0}
+.step button.add{background:var(--crust);color:var(--crust-ink)}
+.step .q{min-width:24px;text-align:center;font-family:var(--f-num);font-weight:700;font-size:17px}
+.closedmask .step button{opacity:.35;pointer-events:none}
+
+.cartbar{position:fixed;left:0;right:0;bottom:0;z-index:10;background:var(--ink);color:var(--paper);
+  padding:10px max(16px,env(safe-area-inset-right,0px)) calc(12px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+.cartbar .in{max-width:1000px;margin:0 auto;display:flex;align-items:center;gap:14px;justify-content:space-between}
+.cartbar .sum{min-width:0}
+.cartbar .sum .top{display:flex;align-items:baseline;gap:10px}
+.cartbar .sum b{font-family:var(--f-num);font-size:26px}
+.cartbar .sum .cnt{font-size:14px;font-weight:700}
+.cartbar .hint{font-size:12.5px;opacity:.78;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.btn{border:0;border-radius:999px;padding:11px 22px;font-weight:900;font-size:15px;background:var(--crust);color:var(--crust-ink);flex:none}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn.ghost{background:transparent;border:1.5px solid var(--line);color:var(--ink)}
+
+.sheet{position:fixed;inset:0;z-index:20;background:rgba(20,12,6,.45);display:flex;align-items:flex-end;justify-content:center}
+.sheet .panel{background:var(--paper);width:100%;max-width:560px;max-height:92%;overflow:auto;-webkit-overflow-scrolling:touch;border-radius:20px 20px 0 0;
+  padding:20px max(18px,env(safe-area-inset-right,0px)) calc(20px + env(safe-area-inset-bottom,0px)) max(18px,env(safe-area-inset-left,0px))}
+.panel h2{margin:0 0 12px;font-size:20px;font-weight:900}
+.lines{list-style:none;margin:0 0 10px;padding:0;border-top:1px solid var(--line)}
+.lines li{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-size:14.5px}
+.lines li .x{font-family:var(--f-num);font-weight:700}
+.calc{background:var(--card);border:1.5px dashed var(--line);border-radius:12px;padding:10px 12px;margin-bottom:12px;font-size:13.5px;color:var(--muted)}
+.calc div{display:flex;justify-content:space-between;gap:10px}
+.calc div span:last-child{font-family:var(--f-num);color:var(--ink)}
+.total{display:flex;justify-content:space-between;align-items:baseline;font-weight:900;font-size:16px;margin-bottom:14px}
+.total b{font-family:var(--f-num);font-size:26px;color:var(--crust)}
+.field{display:flex;flex-direction:column;gap:4px;margin-bottom:12px}
+.field label{font-weight:700;font-size:13.5px}
+.field label i{font-style:normal;color:var(--crust)}
+.field input,.field textarea{font:inherit;font-size:16px;color:var(--ink);background:var(--card);border:1.5px solid var(--line);border-radius:10px;padding:9px 12px;width:100%}
+.field textarea{min-height:56px;resize:vertical}
+.actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.msg{font-size:13.5px;margin:0 0 10px;color:var(--muted)}
+.msg.err{color:var(--warn);font-weight:700}
+.pay{background:var(--crumb);border-radius:12px;padding:10px 12px;font-size:14px;font-weight:700;margin-bottom:12px}
+.ok{font-size:44px;line-height:1;color:var(--good);font-weight:900}
+.olist{display:flex;flex-direction:column;gap:10px;margin-bottom:12px}
+.ocard{background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:10px 12px;font-size:14px}
+.ocard .h{display:flex;justify-content:space-between;gap:8px;color:var(--muted);font-size:12.5px;margin-bottom:4px}
+.ocard .f{display:flex;justify-content:space-between;gap:8px;margin-top:6px;font-weight:700}
+.pill{font-size:12px;font-weight:700;padding:1px 8px;border-radius:999px;border:1.5px solid var(--line)}
+.pill.paid{background:var(--good);border-color:var(--good);color:var(--paper)}
+.state{text-align:center;color:var(--muted);padding:48px 8px;font-size:15px}
+.state b{display:block;color:var(--ink);font-size:17px;margin-bottom:6px}
+.skel{background:var(--card);border:1.5px solid var(--line);border-radius:16px;height:260px;opacity:.6}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+@media (max-width:440px){.grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.dish .nm{font-size:14px}.step button{width:34px;height:34px}.rule b{font-size:14px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <small id="store">團購</small>
+      <h1 id="evTitle">貝果團購</h1>
+      <p id="evSub">看圖選口味，系統自動計算金額。</p>
+    </div>
+    <div class="hdr-actions">
+      <span class="status" id="status" hidden>開放中</span>
+      <button type="button" class="link" id="lookupBtn">查我的訂單</button>
+    </div>
+  </header>
+
+  <div class="rule" id="rule" hidden>
+    <div>滿一組<b id="rSet">15 顆 $999</b></div>
+    <div>湊單每顆<b id="rEach">$66.6</b></div>
+    <div>數量<b>不限</b></div>
+  </div>
+  <section class="pool" id="pool" hidden>
+    <h2>全團湊單進度</h2>
+    <p id="poolText"></p>
+    <div class="beads" id="beads"></div>
+  </section>
+
+  <main id="menu"><div class="grid"><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div></div></main>
+</div>
+
+<div class="cartbar">
+  <div class="in">
+    <div class="sum">
+      <div class="top"><b class="num" id="cTotal">$0</b><span class="cnt" id="cCount">0 顆</span></div>
+      <div class="hint" id="cHint">載入中…</div>
+    </div>
+    <button class="btn" id="checkout" disabled>確認訂單</button>
+  </div>
+</div>
+<div class="sheet" id="sheet" hidden><div class="panel" id="panel" role="dialog" aria-modal="true"></div></div>
+
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const money=n=>"$"+Number(n||0).toLocaleString("en-US");
+const store={get(k,d){try{return JSON.parse(localStorage.getItem(k))??d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
+let CFG={size:15,price:999},FLAVORS=[],cart={},open=true,ready=false;
+
+/* 金額規則（與後台相同）：滿一組按組價，不滿一組按「組價 ÷ 顆數」分攤，四捨五入 */
+const priceOf=n=>Math.floor(n/CFG.size)*CFG.price+Math.round((n%CFG.size)*CFG.price/CFG.size);
+const each=()=>Math.round(CFG.price/CFG.size*10)/10;
+const imgSrc=v=>!v?"":/^https?:\/\//i.test(v)?v:"img/"+v;
+const short=n=>n.replace(/貝果$/,"");
+
+function breakdown(n){
+  const sets=Math.floor(n/CFG.size),rest=n%CFG.size,rows=[];
+  if(sets)rows.push([`${sets} 組 × ${CFG.size} 顆`,money(sets*CFG.price)]);
+  if(rest)rows.push([`湊單 ${rest} 顆 × $${each()}`,money(Math.round(rest*CFG.price/CFG.size))]);
+  return rows;
+}
+
+/* ---------- 口味 ---------- */
+function buildMenu(list){
+  FLAVORS=list;
+  if(!list.length){$("#menu").innerHTML=`<div class="state"><b>目前沒有可選的口味</b>請團主到試算表「口味」工作表新增並勾選「上架」。</div>`;return}
+  $("#menu").innerHTML=`<div class="grid">${list.map(card).join("")}</div>`;
+}
+function card(f){
+  const src=imgSrc(f.img);
+  return `<article class="dish" data-n="${esc(f.name)}">${src?`<div class="ph"><img src="${esc(src)}" alt="${esc(f.name)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.remove()"></div>`:""}
+   <div class="nm">${esc(f.name)}</div>${f.desc?`<div class="ds">${esc(f.desc)}</div>`:""}
+   <div class="row"><div class="step"><button type="button" data-k="${esc(f.name)}" data-d="-1" aria-label="減少">−</button><span class="q" data-q="${esc(f.name)}">0</span><button type="button" class="add" data-k="${esc(f.name)}" data-d="1" aria-label="增加">＋</button></div></div></article>`;
+}
+$("#menu").addEventListener("click",e=>{const b=e.target.closest("button[data-k]");if(!b||!open||!ready)return;
+  const k=b.dataset.k;cart[k]=Math.max(0,(cart[k]||0)+(+b.dataset.d));if(!cart[k])delete cart[k];refresh()});
+
+const valid=k=>FLAVORS.some(f=>f.name===k);
+function cartLines(){return Object.entries(cart).filter(([k,q])=>q>0&&valid(k)).map(([k,q])=>({name:k,qty:q}))}
+function refresh(){
+  if(!ready)return;
+  document.querySelectorAll("[data-q]").forEach(el=>{el.textContent=cart[el.dataset.q]||0});
+  document.querySelectorAll(".dish").forEach(el=>el.classList.toggle("on",!!cart[el.dataset.n]));
+  const n=cartLines().reduce((a,l)=>a+l.qty,0),rest=n%CFG.size,sets=Math.floor(n/CFG.size);
+  $("#cTotal").textContent=money(priceOf(n));
+  $("#cCount").textContent=`${n} 顆`;
+  $("#cHint").textContent=!open?"團購已截止":!n?`選滿 ${CFG.size} 顆＝${money(CFG.price)}，不滿也能湊單`:
+    rest===0?`剛好 ${sets} 組，每組 ${money(CFG.price)}`:
+    `${sets?sets+" 組＋":""}${rest} 顆湊單｜再選 ${CFG.size-rest} 顆就自己滿一組`;
+  $("#checkout").disabled=!n||!open;
+  store.set("bagel_cart",cart);
+}
+function showPool(p){
+  if(!p)return;
+  $("#pool").hidden=false;
+  $("#poolText").innerHTML=p.count===0?`還沒有人下單，來當第一個吧。`:
+    `全團目前 <b class="num">${p.count}</b> 顆＝${p.sets} 組${p.rest?`＋${p.rest} 顆`:""}。`+
+    (p.need?`還差 <b class="num">${p.need}</b> 顆湊滿第 ${p.sets+1} 組。`:`剛好湊滿！`);
+  const fill=p.count&&!p.rest?CFG.size:p.rest;
+  $("#beads").innerHTML=Array.from({length:CFG.size},(_,i)=>`<i class="${i<fill?"on":""}"></i>`).join("");
+}
+
+/* ---------- 確認與送出 ---------- */
+function showSheet(html){$("#panel").innerHTML=html;$("#sheet").hidden=false;$("#panel").scrollTop=0}
+function hideSheet(){$("#sheet").hidden=true}
+$("#sheet").addEventListener("click",e=>{if(e.target.id==="sheet")hideSheet()});
+$("#checkout").onclick=()=>{
+  const ls=cartLines(),n=ls.reduce((a,l)=>a+l.qty,0);
+  showSheet(`<h2>確認你的口味</h2><ul class="lines">${ls.map(l=>`<li><span>${esc(l.name)}</span><span class="x">× ${l.qty}</span></li>`).join("")}</ul>
+   <div class="calc">${breakdown(n).map(([a,b])=>`<div><span>${a}</span><span>${b}</span></div>`).join("")}</div>
+   <div class="total"><span>共 ${n} 顆，應付</span><b>${money(priceOf(n))}</b></div>
+   <div class="field"><label for="fName">姓名 <i>*</i></label><input id="fName" autocomplete="name" value="${esc(store.get("bagel_name",""))}" placeholder="請填寫真實姓名"></div>
+   <div class="field"><label for="fNote">備註（選填）</label><textarea id="fNote" placeholder="例：幫○○一起訂"></textarea></div>
+   <p class="msg err" id="fErr" hidden></p>
+   <div class="actions"><button type="button" class="btn ghost" id="fBack">再選選</button><button type="button" class="btn" id="fSend">送出訂單</button></div>`);
+  $("#fBack").onclick=hideSheet;$("#fSend").onclick=send;
+};
+function showErr(t){const e=$("#fErr");e.textContent=t;e.hidden=false}
+async function send(){
+  const name=$("#fName").value.trim(),note=$("#fNote").value.trim();
+  if(!name){showErr("請填寫姓名，團主才知道是誰訂的。");$("#fName").focus();return}
+  store.set("bagel_name",name);
+  const btn=$("#fSend");btn.disabled=true;btn.textContent="送出中…";
+  try{
+    const res=await fetch(SCRIPT_URL,{method:"POST",body:JSON.stringify({name,note,cart:Object.fromEntries(cartLines().map(l=>[l.name,l.qty]))}),headers:{"Content-Type":"text/plain;charset=utf-8"}});
+    const r=await res.json();
+    if(!r.ok)throw new Error(r.error||"送出失敗");
+    done(name,r);
+  }catch(err){
+    btn.disabled=false;btn.textContent="再試一次";
+    showErr((err&&err.message&&!/fetch|network|json|load/i.test(err.message))?err.message:"網路連線不穩，訂單還沒送出。請確認網路後再按一次。");
+  }
+}
+function done(name,r){
+  cart={};refresh();showPool(r.pool);
+  showSheet(`<div class="ok">✓</div><h2 style="margin-top:8px">訂單已送出</h2>
+   <ul class="lines">${r.lines.map(l=>`<li><span>${esc(l.name)}</span><span class="x">× ${l.qty}</span></li>`).join("")}</ul>
+   <div class="total"><span>${esc(name)}・${r.count} 顆</span><b>${money(r.total)}</b></div>
+   ${r.pay?`<div class="pay">${esc(r.pay)}</div>`:""}
+   <p class="msg">訂單編號 <b class="num">${esc(r.id)}</b>。之後可按右上「查我的訂單」用姓名查詢。</p>
+   <div class="actions"><button type="button" class="btn ghost" id="again">幫別人訂</button><button type="button" class="btn" id="close">完成</button></div>`);
+  $("#again").onclick=()=>{hideSheet();scrollTo({top:0})};$("#close").onclick=hideSheet;
+}
+
+/* ---------- 查我的訂單 ---------- */
+$("#lookupBtn").onclick=()=>{
+  if(!SCRIPT_URL)return;
+  showSheet(`<h2>查我的訂單</h2><div class="field"><label for="qName">姓名（與下單時相同）</label><input id="qName" value="${esc(store.get("bagel_name",""))}"></div>
+   <div id="qOut"></div><div class="actions"><button type="button" class="btn ghost" id="qClose">關閉</button><button type="button" class="btn" id="qGo">查詢</button></div>`);
+  $("#qClose").onclick=hideSheet;
+  $("#qGo").onclick=async()=>{
+    const q=$("#qName").value.trim();if(!q)return;
+    $("#qOut").innerHTML=`<p class="msg">查詢中…</p>`;
+    try{
+      const r=await (await fetch(SCRIPT_URL+"?name="+encodeURIComponent(q))).json();
+      const os=r.orders||[];
+      $("#qOut").innerHTML=!os.length?`<p class="msg">找不到「${esc(q)}」的訂單。請確認姓名和下單時一字不差。</p>`:
+        `<div class="olist">${os.map(o=>`<div class="ocard"><div class="h"><span>${esc(o.id)}・${esc(o.time)}</span><span class="pill${o.paid?" paid":""}">${o.paid?"已付款":"未付款"}</span></div>${esc(o.detail)}<div class="f"><span>${o.count} 顆</span><span class="num">${money(o.total)}</span></div></div>`).join("")}</div>
+         <p class="msg">要修改或取消，請直接告訴團主。</p>`;
+    }catch(e){$("#qOut").innerHTML=`<p class="msg err">查詢失敗，請確認網路後再試。</p>`}
+  };
+};
+
+/* ---------- 啟動 ---------- */
+function fail(t,m){$("#menu").innerHTML=`<div class="state"><b>${t}</b>${m}</div>`;$("#cHint").textContent="目前無法下單"}
+function start(c){
+  CFG=c;
+  if(c.store)$("#store").textContent=c.store;
+  if(c.title){$("#evTitle").textContent=c.title;document.title=c.title}
+  if(c.sub)$("#evSub").textContent=c.sub;
+  open=c.open!==false;
+  $("#status").hidden=false;$("#status").textContent=open?"開放中":"已截止";$("#status").classList.toggle("closed",!open);
+  $("#rule").hidden=false;$("#rSet").textContent=`${c.size} 顆 ${money(c.price)}`;$("#rEach").textContent=`$${each()}`;
+  showPool(c.pool);
+  buildMenu(Array.isArray(c.menu)?c.menu:[]);
+  $("#menu").classList.toggle("closedmask",!open);
+  ready=true;
+  const saved=store.get("bagel_cart",{});for(const k in saved)if(valid(k)&&saved[k]>0)cart[k]=saved[k];
+  refresh();
+}
+if(!SCRIPT_URL){fail("還沒連接 Google 試算表","請團主打開 index.html，把 Apps Script 的網址貼進 SCRIPT_URL 的引號裡。");$("#lookupBtn").hidden=true}
+else fetch(SCRIPT_URL).then(r=>r.json()).then(start).catch(()=>fail("載入失敗","請確認網路後重新整理頁面。若持續發生，請通知團主。"));
+</script>
+</body>
+</html>
